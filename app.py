@@ -25,23 +25,23 @@ def split_docs(documents, chunk_size=1000, chunk_overlap=20):
 
 docs = split_docs(documents)
 
-embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
-db = Chroma.from_documents(docs, embeddings)
-persist_directory = "chroma_db"
-
-vectordb = Chroma.from_documents(
-    documents=docs, embedding=embeddings, persist_directory=persist_directory
-)
-
-vectordb.persist()
-
 # Define a function to set the API key
 def set_api_key(api_key):
     os.environ["OPENAI_API_KEY"] = api_key
 
 # Load the question answering chain and initialize the model inside the API
 @app.route('/answer', methods=['POST'])
+
 def get_answer():
+    embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+    db = Chroma.from_documents(docs, embeddings)
+    persist_directory = "chroma_db"
+
+    vectordb = Chroma.from_documents(
+        documents=docs, embedding=embeddings, persist_directory=persist_directory
+    )
+
+    vectordb.persist()
     try:
         # Get the query from the request body
         query = request.json['query']
