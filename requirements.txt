@@ -1,2 +1,6 @@
 flask
-azure-storage-blob
+langchain
+sentence-transformers
+chromadb
+unstructured
+openai

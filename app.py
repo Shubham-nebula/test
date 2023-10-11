@@ -1,63 +1,74 @@
 from flask import Flask, request, jsonify
-from azure.storage.blob import BlobServiceClient, BlobClient
+from langchain.document_loaders import DirectoryLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import SentenceTransformerEmbeddings
+from langchain.vectorstores import Chroma
 import os
+from langchain.chains.question_answering import load_qa_chain
 
 app = Flask(__name__)
 
-class DownloadPayload:
-    def __init__(self, blob_name):
-        self.blob_name = blob_name
+# Load documents and create a vector store
+directory = 'transcript'
 
-def read_text_from_file(file_path):
+def load_docs(directory):
+    loader = DirectoryLoader(directory)
+    documents = loader.load()
+    return documents
+
+documents = load_docs(directory)
+
+def split_docs(documents, chunk_size=1000, chunk_overlap=20):
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    docs = text_splitter.split_documents(documents)
+    return docs
+
+docs = split_docs(documents)
+
+embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+db = Chroma.from_documents(docs, embeddings)
+persist_directory = "chroma_db"
+
+vectordb = Chroma.from_documents(
+    documents=docs, embedding=embeddings, persist_directory=persist_directory
+)
+
+vectordb.persist()
+
+# Define a function to set the API key
+def set_api_key(api_key):
+    os.environ["OPENAI_API_KEY"] = api_key
+
+# Load the question answering chain and initialize the model inside the API
+@app.route('/answer', methods=['POST'])
+def get_answer():
     try:
-        with open(file_path, "r") as file:
-            text = file.read()
-        return text
+        # Get the query from the request body
+        query = request.json['query']
+
+        # Get the API key from the request headers
+        api_key = request.headers.get('X-API-Key')
+
+        # Set the API key using os.environ
+        set_api_key(api_key)
+
+        # Load the language model inside the API
+        from langchain.chat_models import ChatOpenAI
+        model_name = "gpt-3.5-turbo"
+        llm = ChatOpenAI(model_name=model_name)
+
+        # Load the question answering chain
+        chain = load_qa_chain(llm, chain_type="stuff", verbose=True)
+
+        # Search for matching documents
+        matching_docs = db.similarity_search(query)
+
+        # Run the question answering chain
+        answer = chain.run(input_documents=matching_docs, question=query)
+
+        return jsonify({"answer": answer})
     except Exception as e:
-        print(f"Error reading file '{file_path}': {str(e)}")
-        return None
-
-
-def download_file_from_blob(container_name, blob_name):
-    try:
-        connection_string = "DefaultEndpointsProtocol=https;AccountName=azuretestshubham832458;AccountKey=2yEaP59qlgKVv6kEUCA5ARB4wdV3ZRoL2X9zjYCcIxOSYAG1CSBbBlAMPx3uBIe7ilQtSh7purEK+AStvFn8GA==;EndpointSuffix=core.windows.net"  # Replace with your Azure Blob Storage connection string
-        
-        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-        
-        destination_path = f"transcripts/{blob_name}"  # Replace with the desired destination path
-        
-        os.makedirs(os.path.dirname(destination_path), exist_ok=True)  # Create the destination directory if it doesn't exist
-        
-        with open(destination_path, "wb") as file:
-            file.write(blob_client.download_blob().readall())
-        
-        print(f"File downloaded successfully: {destination_path}")
-        return True
-    except Exception as e:
-        print(f"Error downloading file '{blob_name}': {str(e)}")
-        return False
-
-
-app = Flask(__name__)
-
-@app.route("/download", methods=["POST"])
-def download_file():
-    payload = request.json
-    blob_name = payload.get("blob_name")
+        return jsonify({"error": str(e)})
     
-    if not blob_name:
-        return jsonify({"message": "Blob name not provided."}), 400
-    
-    success = download_file_from_blob("transcript", blob_name)
-    
-    if success:
-        return jsonify({"message": "File download completed successfully."})
-    else:
-        return jsonify({"message": "File download failed."}), 500
-
-
-
-
-if __name__ == "__main__":
-    app.run()
+if __name__ == '__main__':
+    app.run(debug=True)
