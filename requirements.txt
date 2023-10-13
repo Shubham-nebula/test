@@ -1,6 +1,3 @@
 flask
 langchain
-sentence-transformers
-chromadb
-unstructured
-openai
+pinecone-client
